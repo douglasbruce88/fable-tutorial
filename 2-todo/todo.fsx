@@ -44,45 +44,79 @@ open Elmish
 
 type Update =
   | Input of string
+  | Create
+  | Remove of int
+  | ToggleDone of int
+  | ToggleShowCompleted
 
 type Model =
-  { Input : string }
+  { Input : string
+    Items : (int * string * bool) list
+    NextID : int
+    ShowCompleted : bool }
 
 // ------------------------------------------------------------------------------------------------
 // Given an old state and update event, produce a new state
 // ------------------------------------------------------------------------------------------------
+let removeEltByID id = List.filter (fun (a, _, _) -> a <> id)
+let toggleEltByID id = List.map (fun (a, b, c) -> if a = id then (a, b, not c) else (a, b, c))
 
 let update state = function
   | Input s -> { state with Input = s }
-
+  | Create -> {Items = if state.Input = "" then state.Items else (state.NextID, state.Input, false) :: state.Items
+               Input = ""
+               NextID = state.NextID + 1
+               ShowCompleted = state.ShowCompleted }
+  | Remove i -> {Items = removeEltByID i state.Items
+                 Input = ""
+                 NextID = state.NextID
+                 ShowCompleted = state.ShowCompleted } 
+  | ToggleDone id -> {Items = toggleEltByID id state.Items
+                      Input = ""
+                      NextID = state.NextID
+                      ShowCompleted = state.ShowCompleted } 
+  | ToggleShowCompleted -> { state with ShowCompleted = not state.ShowCompleted }
+ 
 // ------------------------------------------------------------------------------------------------
 // Render page based on the current state
 // ------------------------------------------------------------------------------------------------
 
+let doneClass = function
+  | true ->  "class" => "done"
+  | false -> "class" => ""
+
 let render trigger state =
+  let listElement (idx, item, isDone)  = 
+    h?li [doneClass isDone
+          "onclick" =!> fun _ -> trigger (ToggleDone idx)] 
+         [text item
+          h?a ["href" => "#"; "onclick" =!> fun _ -> trigger (Remove idx)] 
+              [ h?span [] [ text "X" ] ] ]
+  let lists = 
+      state.Items 
+      |> List.rev 
+      |> List.map (fun (idx, item, isDone) -> if (isDone && not state.ShowCompleted ) then h?div[][] else listElement (idx, item, isDone) )
+
   h?div [] [
-    h?ul [] [
-      h?li ["class" => "done"] [
-        text "First work item"
-        h?a ["href" => "#"; "onclick" =!> fun _ -> () ] [ h?span [] [ text "X" ] ]
-      ]
-      h?li [] [
-        text "Second work item"
-        h?a ["href" => "#"; "onclick" =!> fun _ -> () ] [ h?span [] [ text "X" ] ]
-      ]
-    ]
+    h?ul [] lists
     h?input [
       "value" => state.Input
       "oninput" =!> fun d -> trigger (Input(unbox d?target?value)) ] []
     h?button
-      [ ]
+      [ yield "onclick" =!> fun _ -> trigger Create ]
       [ text "Add" ]
+    h?button
+      [ yield "onclick" =!> fun _ -> trigger ToggleShowCompleted ]
+      [ text "Toggle" ]
   ]
 
 // ------------------------------------------------------------------------------------------------
 // Start the application with initial state
 // ------------------------------------------------------------------------------------------------
 
-let initial = { Input = "" }
+let initial = { Input = ""
+                Items = []
+                NextID = 0
+                ShowCompleted = true }
 
 app "todo" initial render update

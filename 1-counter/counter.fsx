@@ -27,6 +27,7 @@ open Elmish
 type Update =
   | Increment
   | Decrement
+  | Reset
 
 type Model =
   { Count : int }
@@ -38,6 +39,7 @@ type Model =
 let update state = function
   | Increment -> { Count = state.Count + 1 }
   | Decrement -> { Count = state.Count - 1 }
+  | Reset -> { Count = 0 }
 
 // ------------------------------------------------------------------------------------------------
 // Render page based on the current state
@@ -52,6 +54,9 @@ let render trigger state =
     h?button
       [ yield "onclick" =!> fun _ -> trigger Decrement ]
       [ text "-1" ]
+    h?button
+      [ yield "onclick" =!> fun _ -> trigger Reset ]
+      [ text "Reset" ]
   ]
 
 // ------------------------------------------------------------------------------------------------
