@@ -48,14 +48,17 @@ module FsOption = Microsoft.FSharp.Core.Option
 // Domain model - simple type for shapes & events modeling operations on state 
 // -------------------------------------------------------------------------------------------------
 
+type Colour = int * int * int
+
 type Shape =
-  { x1:float; y1:float; x2:float; y2:float; }
+  { x1:float; y1:float; x2:float; y2:float; colour: Colour}
 
 // BONUS: If you're implementing the reset button, use the 
 // following type for communication with the server-side:
 //
 //   type ShapeCommand = 
 //     { cmd:string; shape:Shape option }
+
   
 type DrawingMessage = 
   // Set the shape currently being drawn
@@ -64,6 +67,8 @@ type DrawingMessage =
   | AddShape  
   // Get the optional current shape & list of drawn shapes
   | GetState of ClientReplyChannel<Shape option * Shape list>
+  | RefreshShapes of Shape list
+  | ChangeColour
 
 
 // -------------------------------------------------------------------------------------------------
@@ -71,20 +76,23 @@ type DrawingMessage =
 // The agent receives messages that specify how to update the state
 // -------------------------------------------------------------------------------------------------
   
+let rand = Random()
 let agent = MailboxProcessor.Start(fun inbox ->
-  let rec loop sel shapes = async {
+  let rec loop sel shapes colour = async {
     let! msg = inbox.Receive()
     match msg with
     | SetSelection(sel) -> 
-        return! loop (Some sel) shapes
+        return! loop (Some sel) shapes colour
     | GetState ch ->
         ch.Reply(sel, shapes)
-        return! loop sel shapes
+        return! loop sel shapes colour
     | AddShape -> 
         match sel with 
-        | None -> return! loop None shapes
-        | Some sel -> return! loop None (sel::shapes) }
-  loop None [])
+        | None -> return! loop None shapes colour
+        | Some sel -> return! loop None (sel::shapes)  colour
+    | RefreshShapes shapes -> return! loop None shapes colour
+    | ChangeColour -> return! loop None shapes ( rand.Next(255), rand.Next(255), rand.Next(255)) }
+  loop None [] (rand.Next(255), rand.Next(255), rand.Next(255)) )
   
 // -------------------------------------------------------------------------------------------------
 // The drawing - this is where we implement drawing on canvas
@@ -112,8 +120,8 @@ let drawRectangles () = async {
   let! selection, shapes = agent.PostAndClientReply(GetState)
   ctx.fillStyle <- U3.Case1 "rgb(0,0,0)"
   ctx.fillRect (0., 0., 1000., 1000.)
-  shapes |> Seq.iter (fun rect ->
-    fillRectangle rect "rgba(255,230,120,0.5)")
+  shapes |> Seq.iter (fun (rect) -> let (r, g, b) = rect.colour
+                                    fillRectangle rect (sprintf "rgba(%i,%i,%i,0.5)" r g b ))
   selection |> FsOption.iter (fun rect ->
     fillRectangle rect "rgba(128,128,128,0.2)") }
 
@@ -123,37 +131,41 @@ let drawRectangles () = async {
 // -------------------------------------------------------------------------------------------------
 
 /// We are waiting for mouse down to start drawing
-let rec waiting () = async {
+let rec waiting colour = async {
   do! drawRectangles ()
   let! e = Async.AwaitDomEvent<MouseEvent>(canvas, "mousedown")
   let startPos = e.x - canvas.offsetLeft, e.y - canvas.offsetTop
-  return! drawing startPos }
+  return! drawing startPos colour }
 
 /// We are waiting for mouse move/up to continue or finish drawing
-and drawing (x1, y1) = async {
+and drawing (x1, y1) colour = async {
   let! e = Async.AwaitDomEvent<MouseEvent>(canvas, "mousemove")
   let x2, y2 = e.x - canvas.offsetLeft, e.y - canvas.offsetTop
-  let rect = { x1=x1; y1=y1; x2=x2; y2=y2 }
+  let rect = { x1=x1; y1=y1; x2=x2; y2=y2; colour = colour }
   if e.buttons > 0. then
     agent.Post(SetSelection rect)
     do! drawRectangles ()
-    return! drawing (x1, y1)
+    return! drawing (x1, y1) colour
   else
     addRectangle rect
-    return! waiting() }
+    return! waiting colour }
 
 /// Infinite loop that refreshes rectangles from the server repeatedly
-let refreshing () = async {
+let refreshing  = async {
   while true do
     let! res = Http.Request("GET", "/getrects", None) 
     let shapes = jsonParse<Shape[]>(res) |> List.ofArray
     // TODO: Replace the shapes in the agent 
     // with the newly loaded ones (see TASK #1)
+    agent.Post(RefreshShapes shapes)
     do! drawRectangles ()
     do! Async.Sleep(250) }
 
-refreshing () |> Async.StartImmediate
-waiting () |> Async.StartImmediate
+let startColour = (rand.Next(255), rand.Next(255), rand.Next(255))
+
+refreshing |> Async.StartImmediate
+
+(waiting startColour) |> Async.StartImmediate
 
 // -------------------------------------------------------------------------------------------------
 // Handlers for buttons that implement other functionality
@@ -165,6 +177,6 @@ let circBtn = document.getElementById("circ") :?> HTMLButtonElement
 let rectBtn = document.getElementById("rect") :?> HTMLButtonElement
 
 resetBtn.onclick <- fun _ -> window.alert("Reset!"); null
-rndBtn.onclick <- fun _ -> window.alert("Random color!"); null
+rndBtn.onclick <- fun _ -> agent.Post(ChangeColour); null
 circBtn.onclick <- fun _ -> window.alert("Draw circles!"); null
 rectBtn.onclick <- fun _ -> window.alert("Draw rectangles!"); null

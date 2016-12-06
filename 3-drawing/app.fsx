@@ -37,7 +37,7 @@ let agent = MailboxProcessor.Start(fun inbox ->
     match msg with
     | AddShape(s) -> return! loop (s::shapes)
     | GetShapes(repl) ->
-        repl.Reply(shapes)
+        repl.Reply(List.truncate 20 shapes)
         return! loop shapes }
   loop [] )
 
